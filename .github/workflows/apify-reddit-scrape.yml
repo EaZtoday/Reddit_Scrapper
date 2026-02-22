@@ -1,0 +1,97 @@
+# .github/workflows/apify-reddit-scrape.yml
+# Automated Reddit VoC scraping via Apify — 4-tier strategy for Zen Books
+#
+# Tiers:
+#   1. Pain language mining — raw bookkeeping/accounting struggle posts
+#   2. Solution-seeking / buying intent — people actively looking for help
+#   3. ICP-specific pain — per-niche queries (real estate, therapist, nonprofit, restaurant/construction)
+#   4. Competitor complaints — dissatisfaction with alternatives
+#
+# Usage:
+#   - Manual: Actions → Run workflow → pick a tier (or "all")
+#   - Scheduled: runs all tiers weekly on Monday at 6am UTC
+#
+# Required secrets:
+#   APIFY_API_TOKEN  — your Apify API token
+
+name: Apify Reddit VoC Scrape
+
+on:
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "Which scrape tier to run"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - "1_pain_language"
+          - "2_buying_intent"
+          - "3_icp_specific"
+          - "4_competitor"
+      max_items:
+        description: "Max items per search query"
+        required: false
+        default: "100"
+        type: string
+      time_filter:
+        description: "Time range for posts"
+        required: false
+        default: "month"
+        type: choice
+        options:
+          - day
+          - week
+          - month
+          - year
+
+  schedule:
+    # Weekly on Monday at 6am UTC
+    - cron: "0 6 * * 1"
+
+env:
+  APIFY_ACTOR_ID: "trudax/reddit-scraper"
+  APIFY_API_BASE: "https://api.apify.com/v2"
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install apify-client pyyaml
+
+      - name: Run Apify scrape
+        env:
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}
+          TIER: ${{ github.event.inputs.tier || 'all' }}
+          MAX_ITEMS: ${{ github.event.inputs.max_items || '100' }}
+          TIME_FILTER: ${{ github.event.inputs.time_filter || 'month' }}
+        run: python scripts/apify_scrape.py
+
+      - name: Upload raw results as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apify-results-${{ github.run_id }}
+          path: data/apify_results/
+          retention-days: 30
+
+      - name: Convert to VoC pipeline format
+        run: python scripts/apify_adapter.py
+
+      - name: Upload adapted results
+        uses: actions/upload-artifact@v4
+        with:
+          name: voc-posts-${{ github.run_id }}
+          path: data/apify_adapted/
+          retention-days: 30
