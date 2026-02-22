@@ -1,44 +1,43 @@
-Based on the following top-performing Reddit posts (titles and summaries), recommend a ranked list of 12 adjacent subreddits that are likely rich in product-worthy pain points and unmet needs.
+Based on the following top-performing Reddit posts (titles and summaries), recommend a ranked list of 12 adjacent subreddits that are likely rich in bookkeeping, accounting, and financial management pain points from small business owners.
 
 {SUMMARIES}
 
-IMPORTANT: Cast a WIDE net across wildly different domains. Do NOT cluster around tech/startup/developer communities. People spend money to solve problems in every area of life.
+We are Zen Books, a done-for-you bookkeeping service on QuickBooks Online. We serve:
+1. Real Estate Investors (multi-entity, property tracking, lender reports)
+2. Therapists & Solo Consultants (practice income, personal/business separation)
+3. Nonprofits (fund tracking, board reports, grant compliance)
+4. Restaurants & Construction (high-volume transactions, vendors, payroll)
 
 Aim for this mix:
-- ~4 tech/startup/developer communities (tools, infrastructure, workflows)
-- ~4 consumer/lifestyle communities (parenting, health, personal finance, fitness, food, pets, hobbies)
-- ~4 niche/unexpected communities (trades, aging/eldercare, legal, real estate, education, specific health conditions, local services)
+- ~4 communities where our exact ICPs hang out (real estate, therapy practice, nonprofit management, restaurant/construction owners)
+- ~4 small business / entrepreneurship communities where owners discuss bookkeeping frustrations
+- ~4 adjacent communities where people discuss financial pain (accounting help, tax stress, QuickBooks issues, freelancer finances)
 
 Look for communities where people:
-- Spend money to solve problems or express frustration with existing paid solutions
-- Describe workarounds, time waste, or failed attempts to find tools
-- Discuss recurring operational pain (not just one-off questions)
-- Have high engagement around "how do you handle X?" or "is there a tool for Y?" threads
-
-For each recommended subreddit, provide:
-- A short rationale explaining WHY this community has product opportunities
-- An estimate of:
-  - % of posts with pain point signals
-  - % of comments asking for solutions
-  - Engagement level (low, medium, high)
+- Complain about messy books, QuickBooks frustrations, or tax-time panic
+- Ask "how do you handle your bookkeeping?" or "do I need a bookkeeper?"
+- Describe DIY bookkeeping struggles (wrong categories, reconciliation errors, years behind)
+- Express shame, overwhelm, or confusion about their financial records
+- Discuss hiring (or not hiring) bookkeepers, accountants, or CPAs
 
 Exclude these types of communities entirely:
-- Legal/law-focused subreddits (e.g., r/lawyers, r/legaladvice)
-- Government policy/lobbying subreddits
-- Overseas supplier/import-export/contract subreddits
+- Investment/trading subreddits (r/wallstreetbets, r/stocks, r/cryptocurrency)
+- Personal budgeting only (r/povertyfinance) — unless business owners post there too
+- Accountant/bookkeeper professional communities where PROVIDERS discuss their practice (we want CLIENTS, not providers)
+- Political or regulatory policy subreddits
 
 Only include subreddits that:
-- Have active discussions about problems, workflows, or tool frustrations
+- Have active discussions about bookkeeping, accounting, or financial management pain
 - Are active in the past month
 - Are not already on the main tracked list
 
 Respond in this format:
 [
   {
-    "subreddit": "smallbusiness",
-    "reason": "Owners frequently discuss operational pain points and seek affordable tool recommendations.",
-    "pain_signal_pct": 55,
-    "solution_requests_pct": 45,
+    "subreddit": "RealEstateInvesting",
+    "reason": "Landlords frequently discuss multi-entity bookkeeping struggles, QuickBooks frustrations, and lender reporting requirements.",
+    "pain_signal_pct": 40,
+    "solution_requests_pct": 35,
     "engagement_level": "high"
   },
   ...
