@@ -5,6 +5,10 @@ Uses Reddit's public JSON endpoints (no API key, no OAuth, no Apify token).
 Same 4-tier search strategy as apify_scrape.py, outputs to data/apify_results/
 so the existing adapter → import → pipeline flow works unchanged.
 
+Strategy:
+  1. Primary: old.reddit.com JSON (more permissive than www)
+  2. Fallback: PullPush.io API (Reddit archive, no auth needed)
+
 Usage:
     python scripts/noauth_scrape.py                    # all tiers
     python scripts/noauth_scrape.py --tier 1_pain_language
@@ -14,9 +18,10 @@ Usage:
 
 import argparse
 import json
+import random
 import time
 import sys
-from datetime import datetime, UTC
+from datetime import datetime, timezone, timedelta, UTC
 from pathlib import Path
 from urllib.parse import quote_plus
 
@@ -27,9 +32,38 @@ import requests
 # ---------------------------------------------------------------------------
 
 OUTPUT_DIR = Path("data/apify_results")
-USER_AGENT = "Mozilla/5.0 (compatible; ZenBooksVoC/1.0; research)"
-REQUEST_DELAY = 2.5  # seconds between requests (respect Reddit rate limits)
+REQUEST_DELAY = 3.0  # seconds between requests (respect rate limits)
 MAX_RETRIES = 3
+
+# Browser-realistic headers — Reddit blocks obvious bots
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "DNT": "1",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "max-age=0",
+}
+
+# Time filter mapping for PullPush API (uses epoch timestamps)
+TIME_FILTER_DAYS = {
+    "hour": 1/24,
+    "day": 1,
+    "week": 7,
+    "month": 30,
+    "year": 365,
+    "all": 3650,
+}
 
 # ---------------------------------------------------------------------------
 # 4-Tier search queries — identical to apify_scrape.py
@@ -113,92 +147,220 @@ TIERS = {
 
 
 # ---------------------------------------------------------------------------
-# Reddit public JSON fetcher
+# Source 1: old.reddit.com JSON (primary — more permissive than www)
 # ---------------------------------------------------------------------------
 
-def fetch_reddit_search(subreddit: str, query: str, time_filter: str,
-                        max_items: int, session: requests.Session) -> list[dict]:
-    """Fetch search results from Reddit's public JSON API for a single subreddit."""
+def _fetch_old_reddit(subreddit: str, query: str, time_filter: str,
+                      max_items: int, session: requests.Session) -> list[dict] | None:
+    """Try old.reddit.com JSON endpoint. Returns None on hard failure (try fallback)."""
     url = (
-        f"https://www.reddit.com/r/{subreddit}/search.json"
+        f"https://old.reddit.com/r/{subreddit}/search.json"
         f"?q={quote_plus(query)}&restrict_sr=1&t={time_filter}"
         f"&sort=relevance&limit={min(max_items, 100)}"
     )
 
     for attempt in range(MAX_RETRIES):
         try:
-            resp = session.get(url, timeout=15)
+            # Add jitter to look less bot-like
+            time.sleep(random.uniform(0.3, 1.0))
+            resp = session.get(url, timeout=20)
 
             if resp.status_code == 429:
-                wait = (attempt + 1) * 5
-                print(f"      Rate limited, waiting {wait}s...")
+                wait = (attempt + 1) * 5 + random.uniform(1, 3)
+                print(f"      Rate limited, waiting {wait:.0f}s...")
                 time.sleep(wait)
                 continue
 
+            if resp.status_code == 403:
+                # Reddit is blocking us — signal to try fallback
+                return None
+
             if resp.status_code != 200:
-                print(f"      HTTP {resp.status_code} for r/{subreddit}, skipping")
-                return []
+                print(f"      old.reddit HTTP {resp.status_code} for r/{subreddit}")
+                return None
 
             data = resp.json()
             children = data.get("data", {}).get("children", [])
-            return [child["data"] for child in children if child.get("data")]
+            results = [child["data"] for child in children if child.get("data")]
+            return results
 
         except (requests.RequestException, json.JSONDecodeError) as e:
             if attempt < MAX_RETRIES - 1:
                 wait = (attempt + 1) * 3
-                print(f"      Error: {e}, retrying in {wait}s...")
+                print(f"      old.reddit error: {e}, retrying in {wait}s...")
                 time.sleep(wait)
             else:
-                print(f"      Failed after {MAX_RETRIES} attempts: {e}")
+                return None
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Source 2: PullPush.io API (fallback — Reddit archive, no auth)
+# ---------------------------------------------------------------------------
+
+def _fetch_pullpush(subreddit: str, query: str, time_filter: str,
+                    max_items: int, session: requests.Session) -> list[dict]:
+    """Fetch from PullPush.io Reddit archive API. Always returns a list."""
+    after_ts = int(
+        (datetime.now(tz=timezone.utc) - timedelta(days=TIME_FILTER_DAYS.get(time_filter, 30))).timestamp()
+    )
+
+    url = (
+        f"https://api.pullpush.io/reddit/search/submission/"
+        f"?q={quote_plus(query)}&subreddit={subreddit}"
+        f"&after={after_ts}&sort=score&sort_type=desc"
+        f"&size={min(max_items, 100)}"
+    )
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = session.get(url, timeout=30)
+
+            if resp.status_code == 429:
+                wait = (attempt + 1) * 5
+                print(f"      PullPush rate limited, waiting {wait}s...")
+                time.sleep(wait)
+                continue
+
+            if resp.status_code != 200:
+                print(f"      PullPush HTTP {resp.status_code} for r/{subreddit}")
+                return []
+
+            data = resp.json()
+            return data.get("data", [])
+
+        except (requests.RequestException, json.JSONDecodeError) as e:
+            if attempt < MAX_RETRIES - 1:
+                wait = (attempt + 1) * 3
+                print(f"      PullPush error: {e}, retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                print(f"      PullPush failed after {MAX_RETRIES} attempts: {e}")
                 return []
 
     return []
 
 
-def fetch_comments_for_post(post_id: str, subreddit: str,
-                            session: requests.Session, max_comments: int = 10) -> list[dict]:
-    """Fetch top comments for a post via public JSON."""
-    url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}.json?limit={max_comments}&sort=top"
+def _fetch_pullpush_comments(query: str, subreddit: str, time_filter: str,
+                             max_items: int, session: requests.Session) -> list[dict]:
+    """Fetch comments from PullPush.io."""
+    after_ts = int(
+        (datetime.now(tz=timezone.utc) - timedelta(days=TIME_FILTER_DAYS.get(time_filter, 30))).timestamp()
+    )
+
+    url = (
+        f"https://api.pullpush.io/reddit/search/comment/"
+        f"?q={quote_plus(query)}&subreddit={subreddit}"
+        f"&after={after_ts}&sort=score&sort_type=desc"
+        f"&size={min(max_items, 50)}"
+    )
 
     try:
-        resp = session.get(url, timeout=15)
+        resp = session.get(url, timeout=30)
         if resp.status_code != 200:
             return []
-
         data = resp.json()
-        if len(data) < 2:
-            return []
-
-        comments_data = data[1].get("data", {}).get("children", [])
-        comments = []
-        for child in comments_data:
-            if child.get("kind") != "t1":
-                continue
-            c = child.get("data", {})
-            if c.get("body") and len(c["body"]) > 30:  # Skip short/empty
-                comments.append(c)
-
-        return comments[:max_comments]
-
+        return data.get("data", [])
     except (requests.RequestException, json.JSONDecodeError):
         return []
 
 
+# ---------------------------------------------------------------------------
+# Unified fetcher — tries old.reddit.com first, falls back to PullPush
+# ---------------------------------------------------------------------------
+
+# Track which source is working to avoid repeated failures
+_source_status = {"old_reddit_failed": False}
+
+
+def fetch_reddit_search(subreddit: str, query: str, time_filter: str,
+                        max_items: int, session: requests.Session) -> list[dict]:
+    """Fetch search results, trying old.reddit.com then PullPush.io."""
+
+    # Try old.reddit.com first (unless it already failed this run)
+    if not _source_status["old_reddit_failed"]:
+        results = _fetch_old_reddit(subreddit, query, time_filter, max_items, session)
+        if results is not None:
+            if results:
+                return results
+            # Empty results from old.reddit is fine (just no matches for this query)
+            return []
+        else:
+            print(f"      old.reddit blocked — switching to PullPush.io for remaining queries")
+            _source_status["old_reddit_failed"] = True
+
+    # Fallback to PullPush.io
+    results = _fetch_pullpush(subreddit, query, time_filter, max_items, session)
+    return results
+
+
+def fetch_comments_for_post(post_id: str, subreddit: str,
+                            session: requests.Session, max_comments: int = 10) -> list[dict]:
+    """Fetch top comments for a post. Tries old.reddit.com, falls back to PullPush."""
+
+    # Try old.reddit.com JSON
+    if not _source_status["old_reddit_failed"]:
+        url = f"https://old.reddit.com/r/{subreddit}/comments/{post_id}.json?limit={max_comments}&sort=top"
+        try:
+            time.sleep(random.uniform(0.3, 1.0))
+            resp = session.get(url, timeout=20)
+            if resp.status_code == 200:
+                data = resp.json()
+                if len(data) >= 2:
+                    comments_data = data[1].get("data", {}).get("children", [])
+                    comments = []
+                    for child in comments_data:
+                        if child.get("kind") != "t1":
+                            continue
+                        c = child.get("data", {})
+                        if c.get("body") and len(c["body"]) > 30:
+                            comments.append(c)
+                    return comments[:max_comments]
+        except (requests.RequestException, json.JSONDecodeError):
+            pass
+
+    # Fallback: PullPush comment search (searches by link_id)
+    url = f"https://api.pullpush.io/reddit/search/comment/?link_id={post_id}&sort=score&sort_type=desc&size={max_comments}"
+    try:
+        resp = session.get(url, timeout=30)
+        if resp.status_code == 200:
+            data = resp.json()
+            return [c for c in data.get("data", []) if len(c.get("body", "")) > 30][:max_comments]
+    except (requests.RequestException, json.JSONDecodeError):
+        pass
+
+    return []
+
+
 def normalize_post(raw: dict, tier_name: str, search_term: str,
                    subreddit: str) -> dict:
-    """Convert Reddit JSON post to Apify-compatible format for the adapter."""
+    """Convert Reddit/PullPush JSON post to Apify-compatible format for the adapter."""
+    # Handle both old.reddit.com format and PullPush format
+    permalink = raw.get("permalink", "")
+    if permalink and not permalink.startswith("http"):
+        url = f"https://www.reddit.com{permalink}"
+    elif permalink:
+        url = permalink
+    else:
+        url = raw.get("full_link", raw.get("url", ""))
+
+    created = raw.get("created_utc", 0)
+    if isinstance(created, (int, float)) and created > 0:
+        created_iso = datetime.fromtimestamp(created, tz=UTC).isoformat()
+    else:
+        created_iso = datetime.now(tz=UTC).isoformat()
+
     return {
         "id": raw.get("id", ""),
         "title": raw.get("title", ""),
-        "body": raw.get("selftext", ""),
-        "url": f"https://www.reddit.com{raw.get('permalink', '')}",
-        "subreddit": subreddit,
-        "createdAt": datetime.fromtimestamp(
-            raw.get("created_utc", 0), tz=UTC
-        ).isoformat(),
+        "body": raw.get("selftext", raw.get("body", "")),
+        "url": url,
+        "subreddit": raw.get("subreddit", subreddit),
+        "createdAt": created_iso,
         "score": raw.get("score", 0),
-        "numberOfComments": raw.get("num_comments", 0),
-        "upvotes": raw.get("ups", 0),
+        "numberOfComments": raw.get("num_comments", raw.get("num_comments", 0)),
+        "upvotes": raw.get("ups", raw.get("score", 0)),
         # Metadata tags (same as apify_scrape.py)
         "_tier": tier_name,
         "_search_term": search_term,
@@ -208,22 +370,34 @@ def normalize_post(raw: dict, tier_name: str, search_term: str,
 
 def normalize_comment(raw: dict, parent_post: dict, tier_name: str,
                       search_term: str, subreddit: str) -> dict:
-    """Convert Reddit JSON comment to Apify-compatible format."""
+    """Convert Reddit/PullPush JSON comment to Apify-compatible format."""
+    permalink = raw.get("permalink", "")
+    if permalink and not permalink.startswith("http"):
+        url = f"https://www.reddit.com{permalink}"
+    elif permalink:
+        url = permalink
+    else:
+        url = ""
+
+    created = raw.get("created_utc", 0)
+    if isinstance(created, (int, float)) and created > 0:
+        created_iso = datetime.fromtimestamp(created, tz=UTC).isoformat()
+    else:
+        created_iso = datetime.now(tz=UTC).isoformat()
+
     return {
         "id": raw.get("id", ""),
         "title": parent_post.get("title", ""),
         "body": raw.get("body", ""),
-        "url": f"https://www.reddit.com{raw.get('permalink', '')}",
-        "subreddit": subreddit,
-        "createdAt": datetime.fromtimestamp(
-            raw.get("created_utc", 0), tz=UTC
-        ).isoformat(),
+        "url": url,
+        "subreddit": raw.get("subreddit", subreddit),
+        "createdAt": created_iso,
         "score": raw.get("score", 0),
         "numberOfComments": 0,
-        "upvotes": raw.get("ups", 0),
+        "upvotes": raw.get("ups", raw.get("score", 0)),
         "isComment": True,
         "parentId": parent_post.get("id", ""),
-        "postBody": parent_post.get("selftext", ""),
+        "postBody": parent_post.get("selftext", parent_post.get("body", "")),
         "postTitle": parent_post.get("title", ""),
         "_tier": tier_name,
         "_search_term": search_term,
@@ -323,7 +497,7 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     session = requests.Session()
-    session.headers.update({"User-Agent": USER_AGENT})
+    session.headers.update(BROWSER_HEADERS)
 
     total_queries = sum(
         len(s["subreddits"]) for searches in tiers_to_run.values() for s in searches
@@ -331,10 +505,11 @@ def main():
     est_minutes = (total_queries * REQUEST_DELAY) / 60
 
     print(f"No-Auth Reddit VoC Scraper — Zen Books")
+    print(f"Sources: old.reddit.com JSON -> PullPush.io fallback")
     print(f"Tiers: {', '.join(tiers_to_run.keys())}")
     print(f"Max items/query: {args.max_items}, Time: {args.time_filter}")
     print(f"Total API calls: ~{total_queries} ({est_minutes:.1f} min est.)")
-    print(f"Comments: {'off' if args.no_comments else 'on (adds ~2.5s per high-engagement post)'}")
+    print(f"Comments: {'off' if args.no_comments else 'on (adds ~3s per high-engagement post)'}")
 
     grand_total = []
 
