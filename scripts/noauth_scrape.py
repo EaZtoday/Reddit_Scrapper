@@ -209,7 +209,7 @@ def _fetch_pullpush(subreddit: str, query: str, time_filter: str,
     url = (
         f"https://api.pullpush.io/reddit/search/submission/"
         f"?q={quote_plus(query)}&subreddit={subreddit}"
-        f"&after={after_ts}&sort=score&sort_type=desc"
+        f"&after={after_ts}&sort_type=score&sort=desc"
         f"&size={min(max_items, 100)}"
     )
 
@@ -246,15 +246,24 @@ def _fetch_pullpush(subreddit: str, query: str, time_filter: str,
 # Unified fetcher — tries old.reddit.com first, falls back to PullPush
 # ---------------------------------------------------------------------------
 
-# Track which source is working to avoid repeated failures
-_source_status = {"old_reddit_failed": False}
+# Track which source is working — retry old.reddit periodically
+_source_status = {"old_reddit_failed": False, "queries_since_fail": 0}
+_RETRY_AFTER_N_QUERIES = 10  # re-check old.reddit every N queries
 
 
 def fetch_reddit_search(subreddit: str, query: str, time_filter: str,
                         max_items: int, session: requests.Session) -> list[dict]:
     """Fetch search results, trying old.reddit.com then PullPush.io."""
 
-    # Try old.reddit.com first (unless it already failed this run)
+    # Periodically retry old.reddit.com (it may have unblocked us)
+    if _source_status["old_reddit_failed"]:
+        _source_status["queries_since_fail"] += 1
+        if _source_status["queries_since_fail"] >= _RETRY_AFTER_N_QUERIES:
+            print(f"      Retrying old.reddit.com (cooldown expired)...")
+            _source_status["old_reddit_failed"] = False
+            _source_status["queries_since_fail"] = 0
+
+    # Try old.reddit.com first (unless it recently failed)
     if not _source_status["old_reddit_failed"]:
         results = _fetch_old_reddit(subreddit, query, time_filter, max_items, session)
         if results is not None:
@@ -263,8 +272,9 @@ def fetch_reddit_search(subreddit: str, query: str, time_filter: str,
             # Empty results from old.reddit is fine (just no matches for this query)
             return []
         else:
-            print(f"      old.reddit blocked — switching to PullPush.io for remaining queries")
+            print(f"      old.reddit blocked — using PullPush.io (will retry in {_RETRY_AFTER_N_QUERIES} queries)")
             _source_status["old_reddit_failed"] = True
+            _source_status["queries_since_fail"] = 0
 
     # Fallback to PullPush.io
     results = _fetch_pullpush(subreddit, query, time_filter, max_items, session)
@@ -296,8 +306,8 @@ def fetch_comments_for_post(post_id: str, subreddit: str,
         except (requests.RequestException, json.JSONDecodeError):
             pass
 
-    # Fallback: PullPush comment search (searches by link_id)
-    url = f"https://api.pullpush.io/reddit/search/comment/?link_id={post_id}&sort=score&sort_type=desc&size={max_comments}"
+    # Fallback: PullPush comment search (link_id needs t3_ prefix)
+    url = f"https://api.pullpush.io/reddit/search/comment/?link_id=t3_{post_id}&sort_type=score&sort=desc&size={max_comments}"
     try:
         resp = session.get(url, timeout=30)
         if resp.status_code == 200:
@@ -423,7 +433,11 @@ def run_tier(session: requests.Session, tier_name: str, searches: list[dict],
                 new_posts += 1
 
                 # Fetch comments for high-engagement posts
-                if include_comments and raw_post.get("num_comments", 0) >= 3:
+                # PullPush may lack num_comments — use score >= 5 as fallback
+                has_comments = raw_post.get("num_comments", 0) >= 3
+                if not has_comments and raw_post.get("score", 0) >= 5:
+                    has_comments = True  # likely has comments if upvoted
+                if include_comments and has_comments:
                     time.sleep(REQUEST_DELAY)
                     comments = fetch_comments_for_post(post_id, subreddit, session)
                     for comment in comments:
