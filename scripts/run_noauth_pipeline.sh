@@ -26,9 +26,15 @@ EXTRA_FLAGS=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --tier)      TIER="$2"; shift 2;;
-        --max-items) MAX_ITEMS="$2"; shift 2;;
-        --time)      TIME_FILTER="$2"; shift 2;;
+        --tier)
+            [[ $# -lt 2 ]] && { echo "Error: --tier requires a value"; exit 1; }
+            TIER="$2"; shift 2;;
+        --max-items)
+            [[ $# -lt 2 ]] && { echo "Error: --max-items requires a value"; exit 1; }
+            MAX_ITEMS="$2"; shift 2;;
+        --time)
+            [[ $# -lt 2 ]] && { echo "Error: --time requires a value"; exit 1; }
+            TIME_FILTER="$2"; shift 2;;
         --quick)     MAX_ITEMS=10; EXTRA_FLAGS="--no-comments"; shift;;
         *)           echo "Unknown arg: $1"; exit 1;;
     esac

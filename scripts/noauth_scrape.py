@@ -242,30 +242,6 @@ def _fetch_pullpush(subreddit: str, query: str, time_filter: str,
     return []
 
 
-def _fetch_pullpush_comments(query: str, subreddit: str, time_filter: str,
-                             max_items: int, session: requests.Session) -> list[dict]:
-    """Fetch comments from PullPush.io."""
-    after_ts = int(
-        (datetime.now(tz=timezone.utc) - timedelta(days=TIME_FILTER_DAYS.get(time_filter, 30))).timestamp()
-    )
-
-    url = (
-        f"https://api.pullpush.io/reddit/search/comment/"
-        f"?q={quote_plus(query)}&subreddit={subreddit}"
-        f"&after={after_ts}&sort=score&sort_type=desc"
-        f"&size={min(max_items, 50)}"
-    )
-
-    try:
-        resp = session.get(url, timeout=30)
-        if resp.status_code != 200:
-            return []
-        data = resp.json()
-        return data.get("data", [])
-    except (requests.RequestException, json.JSONDecodeError):
-        return []
-
-
 # ---------------------------------------------------------------------------
 # Unified fetcher — tries old.reddit.com first, falls back to PullPush
 # ---------------------------------------------------------------------------
@@ -359,7 +335,7 @@ def normalize_post(raw: dict, tier_name: str, search_term: str,
         "subreddit": raw.get("subreddit", subreddit),
         "createdAt": created_iso,
         "score": raw.get("score", 0),
-        "numberOfComments": raw.get("num_comments", raw.get("num_comments", 0)),
+        "numberOfComments": raw.get("num_comments", 0),
         "upvotes": raw.get("ups", raw.get("score", 0)),
         # Metadata tags (same as apify_scrape.py)
         "_tier": tier_name,

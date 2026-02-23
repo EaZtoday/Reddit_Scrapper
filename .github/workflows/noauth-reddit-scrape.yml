@@ -70,31 +70,50 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
 
       - name: Install dependencies
         run: pip install requests pyyaml
 
       - name: Run no-auth Reddit scrape
+        env:
+          SCRAPE_TIER: ${{ github.event.inputs.tier || 'all' }}
+          SCRAPE_MAX_ITEMS: ${{ github.event.inputs.max_items || '25' }}
+          SCRAPE_TIME_FILTER: ${{ github.event.inputs.time_filter || 'month' }}
+          SCRAPE_SKIP_COMMENTS: ${{ github.event.inputs.skip_comments }}
         run: |
+          COMMENT_FLAG=""
+          if [ "$SCRAPE_SKIP_COMMENTS" = "true" ]; then
+            COMMENT_FLAG="--no-comments"
+          fi
           python scripts/noauth_scrape.py \
-            --tier "${{ github.event.inputs.tier || 'all' }}" \
-            --max-items "${{ github.event.inputs.max_items || '25' }}" \
-            --time-filter "${{ github.event.inputs.time_filter || 'month' }}" \
-            ${{ github.event.inputs.skip_comments == 'true' && '--no-comments' || '' }}
+            --tier "$SCRAPE_TIER" \
+            --max-items "$SCRAPE_MAX_ITEMS" \
+            --time-filter "$SCRAPE_TIME_FILTER" \
+            $COMMENT_FLAG
+
+      - name: Ensure output directories exist
+        run: |
+          mkdir -p data/apify_results
+          mkdir -p data/apify_adapted
 
       - name: Upload raw results as artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: noauth-results-${{ github.run_id }}
           path: data/apify_results/
           retention-days: 30
+          if-no-files-found: warn
 
       - name: Convert to VoC pipeline format
         run: python scripts/apify_adapter.py
 
       - name: Upload adapted results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: noauth-voc-posts-${{ github.run_id }}
           path: data/apify_adapted/
           retention-days: 30
+          if-no-files-found: warn
