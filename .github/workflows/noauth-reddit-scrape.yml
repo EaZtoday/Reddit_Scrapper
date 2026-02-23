@@ -1,0 +1,100 @@
+# .github/workflows/noauth-reddit-scrape.yml
+# Zero-credential Reddit VoC scraping — no API keys needed
+#
+# Uses Reddit's public JSON endpoints to scrape the same 4-tier VoC strategy.
+# Works without Reddit API credentials, Apify tokens, or any secrets.
+#
+# Tiers:
+#   1. Pain language mining — raw bookkeeping/accounting struggle posts
+#   2. Solution-seeking / buying intent — people actively looking for help
+#   3. ICP-specific pain — per-niche queries (real estate, therapist, nonprofit, restaurant/construction)
+#   4. Competitor complaints — dissatisfaction with alternatives
+#
+# Usage:
+#   - Manual: Actions → Run workflow → pick a tier (or "all")
+#   - Scheduled: runs all tiers weekly on Wednesday at 6am UTC
+#
+# Required secrets: NONE
+
+name: No-Auth Reddit VoC Scrape
+
+on:
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "Which scrape tier to run"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - "1_pain_language"
+          - "2_buying_intent"
+          - "3_icp_specific"
+          - "4_competitor"
+      max_items:
+        description: "Max items per search query"
+        required: false
+        default: "25"
+        type: string
+      time_filter:
+        description: "Time range for posts"
+        required: false
+        default: "month"
+        type: choice
+        options:
+          - day
+          - week
+          - month
+          - year
+      skip_comments:
+        description: "Skip comment fetching (faster)"
+        required: false
+        default: false
+        type: boolean
+
+  schedule:
+    # Weekly on Wednesday at 6am UTC (offset from Apify Monday run)
+    - cron: "0 6 * * 3"
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests pyyaml
+
+      - name: Run no-auth Reddit scrape
+        run: |
+          python scripts/noauth_scrape.py \
+            --tier "${{ github.event.inputs.tier || 'all' }}" \
+            --max-items "${{ github.event.inputs.max_items || '25' }}" \
+            --time-filter "${{ github.event.inputs.time_filter || 'month' }}" \
+            ${{ github.event.inputs.skip_comments == 'true' && '--no-comments' || '' }}
+
+      - name: Upload raw results as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: noauth-results-${{ github.run_id }}
+          path: data/apify_results/
+          retention-days: 30
+
+      - name: Convert to VoC pipeline format
+        run: python scripts/apify_adapter.py
+
+      - name: Upload adapted results
+        uses: actions/upload-artifact@v4
+        with:
+          name: noauth-voc-posts-${{ github.run_id }}
+          path: data/apify_adapted/
+          retention-days: 30
