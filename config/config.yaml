@@ -1,33 +1,34 @@
 # config/config.yaml
+# Zen Books Voice-of-Customer Pipeline
+# Scrapes bookkeeping/accounting communities for ICP pain points, desires, and objections
 
-# Target communities
+# Target communities (bookkeeping & ICP-focused)
 subreddits:
   primary:
-    - devops
-    - selfhosted
-    - webdev
-    - startups
-    - personalfinance
-    - Parenting
     - smallbusiness
-    - Fitness
-    - saas
-    - entrepreneurship
-    - sports
-    - technology
-    - security
-    - pregnant
-    - Beauty
-  exploratory_limit: 12             # Max exploratory subreddits at a time
-  exploratory_refresh_days: 7       # How often to refresh improvised list
-  exploratory_percentage: 90        # % of posts from exploratory communities
-  primary_percentage: 10            # % of posts from configured communities
+    - realestateinvesting
+    - landlord
+    - therapists
+    - privatepractice
+    - Bookkeeping
+    - QuickBooks
+    - tax
+    - nonprofit
+    - accounting
+    - restaurateur
+    - Construction
+    - CommercialRealEstate
+    - Entrepreneur
+  exploratory_limit: 8              # Max exploratory subreddits at a time
+  exploratory_refresh_days: 14      # How often to refresh discovered list
+  exploratory_percentage: 30        # % of posts from exploratory communities
+  primary_percentage: 70            # % of posts from known bookkeeping communities
 
 # Reddit scraping settings
 scraper:
-  min_post_age_days: 5              # Post must be at least 5 days old
-  max_post_age_days: 7              # Ignore posts older than 3 months
-  max_items_per_day: 10           # Total posts/comments scraped per run
+  min_post_age_days: 1              # Post must be at least 1 day old
+  max_post_age_days: 30             # Wider window for lower-volume niche subreddits
+  max_items_per_day: 50             # More volume for better coverage
   include_comments: true
   rate_limit_per_minute: 60         # Reddit API rate limit
 
@@ -49,25 +50,31 @@ ai:
   max_tokens_per_post: 1000         # Estimate for budgeting
   cache_input: true                 # Reuse prompt if post is nearly identical
 
-# Scoring weights (used in filtering and final ranking)
+# Scoring weights (tuned for voice-of-customer extraction)
+# Fields map to AI response keys (same field names, repurposed semantics):
+#   relevance_score      = bookkeeping/accounting relevance
+#   emotion_weight       = emotional intensity (stronger emotion = better copy)
+#   pain_point_weight    = pain specificity & clarity
+#   implementability     = copy potential (how usable for marketing)
+#   technical_depth      = ICP match (how well it maps to our 4 ICPs)
 scoring:
   relevance_weight: 0.25
-  emotion_weight: 0.1
-  pain_point_weight: 0.2
-  implementability_weight: 0.15
-  technical_depth_weight: 0.2       # Penalize vibe-codeable ideas, reward real engineering
-  recent_activity_weight: 0.1       # Prioritize active threads
-  min_technical_depth: 4            # Hard filter: reject posts below this technical depth score
-  output_top_n: 10                  # Number of final posts to recommend
+  emotion_weight: 0.25
+  pain_point_weight: 0.25
+  implementability_weight: 0.15     # Repurposed: copy_potential
+  technical_depth_weight: 0.10      # Repurposed: icp_match
+  recent_activity_weight: 0.0
+  min_technical_depth: 1            # Effectively disabled (was used to filter easy-to-build ideas)
+  output_top_n: 25                  # More results for richer copy banks
 
 # Database settings
 database:
   path: data/db.sqlite
-  retention_days: 90                # Auto-remove posts older than this
+  retention_days: 180               # Longer retention for building copy banks over time
 
 # Logging & output
 log_level: DEBUG                   # For debug & reuse
 save_batch_payloads: true           # For debug & reuse
 
 cleanup:
-  batch_response_retention_days: 3 # Cleanup batch responses older than this
+  batch_response_retention_days: 7  # Keep batch responses longer for review
